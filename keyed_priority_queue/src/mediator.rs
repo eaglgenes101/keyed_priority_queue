@@ -3,13 +3,13 @@ use std::hash::{BuildHasher, Hash};
 
 use indexmap::map::{IndexMap, OccupiedEntry as IMOccupiedEntry, VacantEntry as IMVacantEntry};
 
-use crate::editable_binary_heap::HeapIndex;
+use crate::heap_traits::HeapIndex;
 
 /// Wrapper around possible outer vec index
 /// Used to avoid mux up with heap index
 /// And to make sure that `Mediator` indexed only with MediatorIndex
 #[derive(Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Debug, Hash)]
-pub(crate) struct MediatorIndex(pub(crate) usize);
+pub struct MediatorIndex(pub(crate) usize);
 
 /// This is wrapper over over indexmap that uses `MediatorIndex` as index.
 /// Also it centralized checking for panics

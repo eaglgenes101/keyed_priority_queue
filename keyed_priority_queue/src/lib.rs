@@ -28,7 +28,7 @@
 //! [`KeyedPriorityQueue`]: struct.KeyedPriorityQueue.html
 //!
 //! ```
-//! use keyed_priority_queue::{KeyedPriorityQueue, Entry};
+//! use keyed_priority_queue::{KeyedBinaryPriorityQueue, Entry};
 //! use std::cmp::Reverse;
 //! use std::collections::HashSet;
 //! use std::ops::Index;
@@ -91,7 +91,7 @@
 //!     }
 //!     // Queue that contains all nodes that available for next step
 //!     // Min-queue required so Reverse struct used as priority.
-//!     let mut available = KeyedPriorityQueue::<Position, Reverse<Cost>>::new();
+//!     let mut available = KeyedBinaryPriorityQueue::<Position, Reverse<Cost>>::new();
 //!     available.push(
 //!         start,
 //!         Reverse(Cost {
@@ -148,6 +148,8 @@
 //!
 
 mod editable_binary_heap;
+mod editable_weak_heap;
+mod heap_traits;
 mod keyed_priority_queue;
 mod mediator;
 
@@ -155,3 +157,19 @@ pub use crate::keyed_priority_queue::{
     Entry, KeyedPriorityQueue, KeyedPriorityQueueBorrowIter, KeyedPriorityQueueIterator,
     OccupiedEntry, SetPriorityNotFoundError, VacantEntry,
 };
+
+pub use crate::editable_binary_heap::BinaryHeap;
+pub use crate::editable_weak_heap::WeakHeap;
+pub use crate::heap_traits::EditableHeap;
+
+pub type KeyedBinaryPriorityQueue<
+    TKey,
+    TPriority,
+    RandomState = std::collections::hash_map::RandomState,
+> = KeyedPriorityQueue<TKey, TPriority, editable_binary_heap::BinaryHeap<TPriority>, RandomState>;
+
+pub type KeyedWeakPriorityQueue<
+    TKey,
+    TPriority,
+    RandomState = std::collections::hash_map::RandomState,
+> = KeyedPriorityQueue<TKey, TPriority, editable_weak_heap::WeakHeap<TPriority>, RandomState>;

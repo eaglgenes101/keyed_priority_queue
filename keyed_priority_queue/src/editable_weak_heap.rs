@@ -1,32 +1,86 @@
 use crate::heap_traits::{EditableHeap, HeapEntry, HeapIndex};
+use crate::mediator::MediatorIndex;
 use std::cmp::{Ord, Ordering};
 use std::fmt::Debug;
 use std::vec::Vec;
 
-use crate::mediator::MediatorIndex;
+/// Enum which determines which side the sibling node is on. The child node is on the other side.
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+enum SiblingSide {
+    Left,
+    Right,
+}
+
+impl SiblingSide {
+    fn flip(&mut self) {
+        match self {
+            SiblingSide::Left => *self = SiblingSide::Right,
+            SiblingSide::Right => *self = SiblingSide::Left,
+        };
+    }
+
+    fn as_bool(&self) -> bool {
+        *self == SiblingSide::Right
+    }
+}
+
+impl Default for SiblingSide {
+    fn default() -> Self {
+        SiblingSide::Left
+    }
+}
 
 #[derive(Clone)]
-pub struct BinaryHeap<TPriority>
+pub struct WeakHeap<TPriority>
 where
     TPriority: Ord,
 {
+    sides: Vec<SiblingSide>,
     data: Vec<HeapEntry<TPriority>>,
 }
 
-impl<TPriority: Ord> BinaryHeap<TPriority> {
+impl<TPriority: Ord> WeakHeap<TPriority> {
+    fn distinguished_ancestor(&self, position: HeapIndex) -> HeapIndex {
+        let HeapIndex(mut position) = position;
+        while position > 0 {
+            let binary_parent_pos = position / 2;
+            let is_direct_child = (position % 2 == 0) == self.sides[binary_parent_pos].as_bool();
+            if is_direct_child {
+                return HeapIndex(binary_parent_pos);
+            } else {
+                // This binary parent is actually our sibling
+                position = binary_parent_pos;
+                // And we go through the loop to see what our sibling's parent is
+            }
+        }
+        // If we got here, then we're the root
+        HeapIndex(0)
+    }
+
+    fn next_sibling(&self, position: HeapIndex) -> HeapIndex {
+        let HeapIndex(position) = position;
+        HeapIndex(position * 2 + self.sides[position].as_bool() as usize)
+    }
+
+    fn first_child(&self, position: HeapIndex) -> HeapIndex {
+        let HeapIndex(position) = position;
+        HeapIndex(position * 2 + (!self.sides[position].as_bool()) as usize)
+    }
+
     fn heapify_up<TChangeHandler: std::ops::FnMut(MediatorIndex, HeapIndex)>(
         &mut self,
         position: HeapIndex,
         mut change_handler: TChangeHandler,
     ) {
-        debug_assert!(position.0 < self.data.len(), "Out of index in heapify_up");
+        debug_assert!(position < self.len(), "Out of index in heapify_up");
         let HeapIndex(mut position) = position;
         while position > 0 {
-            let parent_pos = (position - 1) / 2;
+            let HeapIndex(parent_pos) = self.distinguished_ancestor(HeapIndex(position));
             if self.data[parent_pos].priority >= self.data[position].priority {
                 break;
             }
             self.data.swap(parent_pos, position);
+            self.sides[position].flip();
             change_handler(self.data[position].outer_pos, HeapIndex(position));
             position = parent_pos;
         }
@@ -39,48 +93,98 @@ impl<TPriority: Ord> BinaryHeap<TPriority> {
         mut change_handler: TChangeHandler,
     ) {
         debug_assert!(position < self.len(), "Out of index in heapify_down");
-        let HeapIndex(mut position) = position;
-        loop {
+        let HeapIndex(position) = position;
+        let first_child_idx = self.first_child(HeapIndex(position));
+        if first_child_idx.0 < self.data.len() {
             let max_child_idx = {
-                let child1 = position * 2 + 1;
-                let child2 = child1 + 1;
-                if child1 >= self.data.len() {
-                    break;
-                }
-                if child2 < self.data.len()
-                    && self.data[child1].priority <= self.data[child2].priority
-                {
-                    child2
-                } else {
-                    child1
+                let mut current_child_idx = first_child_idx;
+                loop {
+                    let cand_child_idx = self.next_sibling(current_child_idx);
+                    if cand_child_idx.0 >= self.data.len() {
+                        break current_child_idx;
+                    } else {
+                        current_child_idx = cand_child_idx;
+                    }
                 }
             };
-
-            if self.data[position].priority >= self.data[max_child_idx].priority {
-                break;
+            let mut current_child_idx = max_child_idx;
+            while current_child_idx.0 > position {
+                if self.data[position].priority < self.data[current_child_idx.0].priority {
+                    self.data.swap(current_child_idx.0, position);
+                    self.sides[current_child_idx.0].flip();
+                    change_handler(self.data[current_child_idx.0].outer_pos, current_child_idx);
+                }
+                current_child_idx.0 /= 2;
             }
-            self.data.swap(position, max_child_idx);
-            change_handler(self.data[position].outer_pos, HeapIndex(position));
-            position = max_child_idx;
         }
         change_handler(self.data[position].outer_pos, HeapIndex(position));
     }
+
+    /*
+    fn format_recursive(
+        &self,
+        head: &str,
+        i: usize,
+        f: &mut std::fmt::Formatter,
+    ) -> Result<(), std::fmt::Error>
+    where
+        TPriority: Debug,
+    {
+        writeln!(f, "{}{:?}", head, self.data[i])?;
+        if i == 0 {
+            if self.data.len() > 1 {
+                self.format_recursive("    ", 1, f)?;
+            }
+        } else {
+            let HeapIndex(next_child_ind) = self.first_child(HeapIndex(i));
+            if next_child_ind < self.data.len() {
+                let head_more = format!("{}    ", head);
+                self.format_recursive(&head_more, next_child_ind, f)?;
+            }
+            let HeapIndex(next_sibling_ind) = self.next_sibling(HeapIndex(i));
+            if next_sibling_ind < self.data.len() {
+                self.format_recursive(head, next_sibling_ind, f)?;
+            }
+        }
+        Result::Ok(())
+    }
+    */
 }
 
-impl<TPriority: Ord> EditableHeap<TPriority> for BinaryHeap<TPriority> {
+impl<TPriority: Ord> EditableHeap<TPriority> for WeakHeap<TPriority> {
     fn from_entries_vec(heap_base: Vec<HeapEntry<TPriority>>) -> Self {
-        let heapify_start = std::cmp::min(heap_base.len() / 2 + 2, heap_base.len());
-        let mut heap = BinaryHeap { data: heap_base };
-        for pos in (0..heapify_start).rev().map(HeapIndex) {
-            heap.heapify_down(pos, |_, _| {});
+        let heap_len = heap_base.len();
+        let mut heap = WeakHeap {
+            data: heap_base,
+            sides: vec![SiblingSide::default(); heap_len],
+        };
+        let ignorant_distinguished_ancestor = |mut position| {
+            while position > 0 {
+                if position % 2 != 0 {
+                    return position / 2;
+                } else {
+                    // This binary parent is actually our sibling
+                    position /= 2;
+                    // And we go through the loop to see what our sibling's parent is
+                }
+            }
+            // If we got here, then we're the root
+            0
+        };
+        for pos in (1..heap_len).rev() {
+            let ancestor_pos = ignorant_distinguished_ancestor(pos);
+            if heap.data[ancestor_pos].priority < heap.data[pos].priority {
+                heap.data.swap(ancestor_pos, pos);
+                heap.sides[pos].flip();
+            }
         }
 
         heap
     }
 
     #[inline]
-    fn reserve(&mut self, additional: usize) {
-        self.data.reserve(additional)
+    fn reserve(&mut self, capacity: usize) {
+        self.data.reserve(capacity)
     }
 
     /// Puts outer index and priority in queue
@@ -93,11 +197,16 @@ impl<TPriority: Ord> EditableHeap<TPriority> for BinaryHeap<TPriority> {
         priority: TPriority,
         change_handler: TChangeHandler,
     ) {
+        let new_index = self.data.len();
         self.data.push(HeapEntry {
             outer_pos,
             priority,
         });
-        self.heapify_up(HeapIndex(self.data.len() - 1), change_handler);
+        self.sides.push(SiblingSide::default());
+        if new_index % 2 == 0 {
+            self.sides[new_index / 2] = SiblingSide::default();
+        }
+        self.heapify_up(HeapIndex(new_index), change_handler);
     }
 
     /// Removes item at position and returns it
@@ -110,17 +219,19 @@ impl<TPriority: Ord> EditableHeap<TPriority> for BinaryHeap<TPriority> {
         if position >= self.len() {
             return None;
         }
-        if position.0 + 1 == self.len().0 {
+
+        if HeapIndex(position.0 + 1) == self.len() {
             let result = self.data.pop().expect("At least 1 item");
+            self.sides.pop();
             return Some(result.conv_pair());
         }
 
         let result = self.data.swap_remove(position.0);
+        self.sides.pop();
         self.heapify_down(position, change_handler);
         Some(result.conv_pair())
     }
 
-    #[inline]
     fn data(&self) -> &[HeapEntry<TPriority>] {
         &self.data
     }
@@ -160,17 +271,18 @@ impl<TPriority: Ord> EditableHeap<TPriority> for BinaryHeap<TPriority> {
         old
     }
 
+    #[inline]
     fn most_prioritized_idx(&self) -> Option<(MediatorIndex, HeapIndex)> {
         self.data.get(0).map(|x| (x.outer_pos, HeapIndex(0)))
     }
 
-    #[inline]
     fn clear(&mut self) {
         self.data.clear();
+        self.sides.clear();
     }
 }
 
-impl<TPriority: Debug + Ord> Debug for BinaryHeap<TPriority> {
+impl<TPriority: Debug + Ord> Debug for WeakHeap<TPriority> {
     #[inline]
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
         self.data.fmt(f)
@@ -181,15 +293,22 @@ impl<TPriority: Debug + Ord> Debug for BinaryHeap<TPriority> {
 mod tests {
 
     use super::*;
-    use crate::heap_traits::EditableHeap;
     use std::cmp::Reverse;
     use std::collections::{HashMap, HashSet};
 
-    fn is_valid_heap<TP: Ord>(heap: &BinaryHeap<TP>) -> bool {
+    fn is_valid_weak_heap<TP: Ord + Debug>(heap: &WeakHeap<TP>) -> bool {
         for (i, current) in heap.data.iter().enumerate().skip(1) {
-            let parent = &heap.data[(i - 1) / 2];
-            if parent.priority < current.priority {
-                return false;
+            let heap_parent_ind = i / 2;
+            if heap.first_child(HeapIndex(heap_parent_ind)) == HeapIndex(i) {
+                let parent = &heap.data[heap_parent_ind];
+                if parent.priority < current.priority {
+                    println!(
+                        "Heap condition violated at mediator index {}",
+                        current.outer_pos.0
+                    );
+                    println!("{:?}", heap);
+                    return false;
+                }
             }
         }
         true
@@ -202,9 +321,9 @@ mod tests {
             -3, -13,
         ];
         let mut maximum = std::i32::MIN;
-        let mut heap = <BinaryHeap<i32> as EditableHeap<i32>>::from_entries_vec(Vec::new());
+        let mut heap = <WeakHeap<i32> as EditableHeap<i32>>::from_entries_vec(Vec::new());
         assert!(heap.data().get(0).is_none());
-        assert!(is_valid_heap(&heap), "Heap state is invalid");
+        assert!(is_valid_weak_heap(&heap), "Heap state is invalid");
         for (key, x) in items
             .iter()
             .enumerate()
@@ -215,7 +334,7 @@ mod tests {
             }
             heap.push(key, x, |_, _| {});
             assert!(
-                is_valid_heap(&heap),
+                is_valid_weak_heap(&heap),
                 "Heap state is invalid after pushing {}",
                 x
             );
@@ -232,7 +351,7 @@ mod tests {
             78, 81, -45, -41, 91, -34, -33, -31, -27, -22, -19, -8, -5, -3,
         ];
         let mut last_positions = HashMap::<MediatorIndex, HeapIndex>::new();
-        let mut heap = <BinaryHeap<i32> as EditableHeap<i32>>::from_entries_vec(Vec::new());
+        let mut heap = <WeakHeap<i32> as EditableHeap<i32>>::from_entries_vec(Vec::new());
         let mut on_pos_change = |outer_pos: MediatorIndex, position: HeapIndex| {
             last_positions.insert(outer_pos, position);
         };
@@ -301,11 +420,12 @@ mod tests {
             -12, 33, -26, -49, -45, 24, 47, -29, -25, -45, -36, 40, 24, -29, 15, 36, 0, 47, 3, -45,
         ];
 
-        let mut heap = <BinaryHeap<i32> as EditableHeap<i32>>::from_entries_vec(Vec::new());
+        println!("{}", items.len());
+        let mut heap = <WeakHeap<i32> as EditableHeap<i32>>::from_entries_vec(Vec::new());
         for (i, &x) in items.iter().enumerate() {
             heap.push(MediatorIndex(i), x, |_, _| {});
         }
-        assert!(is_valid_heap(&heap), "Heap is invalid before pops");
+        assert!(is_valid_weak_heap(&heap), "Heap is invalid before pops");
 
         let mut sorted_items = items;
         sorted_items.sort_unstable_by_key(|&x| Reverse(x));
@@ -315,7 +435,7 @@ mod tests {
             let (rem_idx, val) = pop_res.unwrap();
             assert_eq!(val, x);
             assert_eq!(items[rem_idx.0], val);
-            assert!(is_valid_heap(&heap), "Heap is invalid after {}", x);
+            assert!(is_valid_weak_heap(&heap), "Heap is invalid after {}", x);
         }
 
         assert_eq!(heap.remove(HeapIndex(0), |_, _| {}), None);
@@ -331,20 +451,20 @@ mod tests {
             (MediatorIndex(4), 4),
         ];
 
-        let mut heap = <BinaryHeap<i32> as EditableHeap<i32>>::from_entries_vec(Vec::new());
+        let mut heap = <WeakHeap<i32> as EditableHeap<i32>>::from_entries_vec(Vec::new());
         for (key, priority) in pairs.iter().cloned() {
             heap.push(key, priority, |_, _| {});
         }
-        assert!(is_valid_heap(&heap), "Invalid before change");
+        assert!(is_valid_weak_heap(&heap), "Invalid before change");
         heap.change_priority(HeapIndex(3), 10, |_, _| {});
-        assert!(is_valid_heap(&heap), "Invalid after upping");
+        assert!(is_valid_weak_heap(&heap), "Invalid after upping");
         heap.change_priority(HeapIndex(2), -10, |_, _| {});
-        assert!(is_valid_heap(&heap), "Invalid after lowering");
+        assert!(is_valid_weak_heap(&heap), "Invalid after lowering");
     }
 
     #[test]
     fn test_clear() {
-        let mut heap = <BinaryHeap<i32> as EditableHeap<i32>>::from_entries_vec(Vec::new());
+        let mut heap = <WeakHeap<i32> as EditableHeap<i32>>::from_entries_vec(Vec::new());
         for x in 0..5 {
             heap.push(MediatorIndex(x), x as i32, |_, _| {});
         }
@@ -356,7 +476,7 @@ mod tests {
 
     #[test]
     fn test_change_change_outer_pos() {
-        let mut heap = <BinaryHeap<i32> as EditableHeap<i32>>::from_entries_vec(Vec::new());
+        let mut heap = <WeakHeap<i32> as EditableHeap<i32>>::from_entries_vec(Vec::new());
         for x in 0..5 {
             heap.push(MediatorIndex(x), x as i32, |_, _| {});
         }

@@ -1,10 +1,10 @@
+use crate::heap_traits::{EditableHeap, HeapEntry, HeapIndex};
 use std::borrow::Borrow;
 use std::collections::hash_map::RandomState;
 use std::fmt::{Debug, Display};
 use std::hash::{BuildHasher, Hash};
 use std::iter::FromIterator;
 
-use crate::editable_binary_heap::{BinaryHeap, BinaryHeapIterator};
 use crate::mediator::{
     Mediator, MediatorEntry, MediatorIndex, OccupiedEntry as MediatorOccupiedEntry,
     VacantEntry as MediatorVacantEntry,
@@ -29,9 +29,9 @@ use crate::mediator::{
 ///
 /// ## Main example
 /// ```
-/// use keyed_priority_queue::KeyedPriorityQueue;
+/// use keyed_priority_queue::KeyedBinaryPriorityQueue;
 ///
-/// let mut queue = KeyedPriorityQueue::new();
+/// let mut queue = KeyedBinaryPriorityQueue::new();
 ///
 /// // Currently queue is empty
 /// assert_eq!(queue.peek(), None);
@@ -83,7 +83,7 @@ use crate::mediator::{
 /// you can use some wrapper that implement it:
 ///
 /// ```
-/// use keyed_priority_queue::KeyedPriorityQueue;
+/// use keyed_priority_queue::KeyedWeakPriorityQueue;
 /// use std::cmp::{Ord, Ordering, Eq, PartialEq, PartialOrd};
 ///
 /// #[derive(Debug)]
@@ -110,7 +110,7 @@ use crate::mediator::{
 ///     }
 /// }
 ///
-/// let mut queue = KeyedPriorityQueue::new();
+/// let mut queue = KeyedWeakPriorityQueue::new();
 /// queue.push(5, OrdFloat(5.0));
 /// queue.push(4, OrdFloat(4.0));
 /// assert_eq!(queue.pop(), Some((5, OrdFloat(5.0))));
@@ -118,25 +118,29 @@ use crate::mediator::{
 /// assert_eq!(queue.pop(), None);
 /// ```
 #[derive(Clone)]
-pub struct KeyedPriorityQueue<TKey, TPriority, S = RandomState>
+pub struct KeyedPriorityQueue<TKey, TPriority, THeap, S = RandomState>
 where
     TKey: Hash + Eq,
     TPriority: Ord,
+    THeap: EditableHeap<TPriority>,
     S: BuildHasher,
 {
-    heap: BinaryHeap<TPriority>,
+    heap: THeap,
     key_to_pos: Mediator<TKey, S>,
+    _phantom: std::marker::PhantomData<TPriority>,
 }
 
-impl<TKey: Hash + Eq, TPriority: Ord> KeyedPriorityQueue<TKey, TPriority, RandomState> {
+impl<TKey: Hash + Eq, TPriority: Ord, THeap: EditableHeap<TPriority>>
+    KeyedPriorityQueue<TKey, TPriority, THeap, RandomState>
+{
     /// Creates an empty queue
     ///
     /// ### Examples
     ///
     ///
     /// ```
-    /// use keyed_priority_queue::KeyedPriorityQueue;
-    /// let mut queue = KeyedPriorityQueue::new();
+    /// use keyed_priority_queue::KeyedBinaryPriorityQueue;
+    /// let mut queue = KeyedBinaryPriorityQueue::new();
     /// queue.push("Key", 4);
     /// ```
     #[inline]
@@ -151,8 +155,8 @@ impl<TKey: Hash + Eq, TPriority: Ord> KeyedPriorityQueue<TKey, TPriority, Random
     ///
     ///
     /// ```
-    /// use keyed_priority_queue::KeyedPriorityQueue;
-    /// let mut queue = KeyedPriorityQueue::with_capacity(10);
+    /// use keyed_priority_queue::KeyedWeakPriorityQueue;
+    /// let mut queue = KeyedWeakPriorityQueue::with_capacity(10);
     /// queue.push("Key", 4);
     /// ```
     #[inline]
@@ -161,16 +165,18 @@ impl<TKey: Hash + Eq, TPriority: Ord> KeyedPriorityQueue<TKey, TPriority, Random
     }
 }
 
-impl<TKey: Hash + Eq, TPriority: Ord, S: BuildHasher> KeyedPriorityQueue<TKey, TPriority, S> {
+impl<TKey: Hash + Eq, TPriority: Ord, THeap: EditableHeap<TPriority>, S: BuildHasher>
+    KeyedPriorityQueue<TKey, TPriority, THeap, S>
+{
     /// Creates an empty queue with specific Hasher
     ///
     /// ### Examples
     ///
     ///
     /// ```
-    /// use keyed_priority_queue::KeyedPriorityQueue;
+    /// use keyed_priority_queue::KeyedBinaryPriorityQueue;
     /// use std::collections::hash_map::RandomState;
-    /// let mut queue = KeyedPriorityQueue::with_hasher(RandomState::default());
+    /// let mut queue = KeyedBinaryPriorityQueue::with_hasher(RandomState::default());
     /// queue.push("Key", 4);
     /// ```
     #[inline]
@@ -186,16 +192,17 @@ impl<TKey: Hash + Eq, TPriority: Ord, S: BuildHasher> KeyedPriorityQueue<TKey, T
     ///
     ///
     /// ```
-    /// use keyed_priority_queue::KeyedPriorityQueue;
+    /// use keyed_priority_queue::KeyedWeakPriorityQueue;
     /// use std::collections::hash_map::RandomState;
-    /// let mut queue = KeyedPriorityQueue::with_capacity_and_hasher(10, RandomState::default());
+    /// let mut queue = KeyedWeakPriorityQueue::with_capacity_and_hasher(10, RandomState::default());
     /// queue.push("Key", 4);
     /// ```
     #[inline]
     pub fn with_capacity_and_hasher(capacity: usize, hasher: S) -> Self {
         Self {
-            heap: BinaryHeap::with_capacity(capacity),
+            heap: THeap::from_entries_vec(Vec::with_capacity(capacity)),
             key_to_pos: Mediator::with_capacity_and_hasher(capacity, hasher),
+            _phantom: std::marker::PhantomData,
         }
     }
 
@@ -210,8 +217,8 @@ impl<TKey: Hash + Eq, TPriority: Ord, S: BuildHasher> KeyedPriorityQueue<TKey, T
     /// Basic usage:
     ///
     /// ```
-    /// use keyed_priority_queue::KeyedPriorityQueue;
-    /// let mut queue = KeyedPriorityQueue::new();
+    /// use keyed_priority_queue::KeyedBinaryPriorityQueue;
+    /// let mut queue = KeyedBinaryPriorityQueue::new();
     /// queue.reserve(100);
     /// queue.push(4, 4);
     /// ```
@@ -228,8 +235,8 @@ impl<TKey: Hash + Eq, TPriority: Ord, S: BuildHasher> KeyedPriorityQueue<TKey, T
     ///
     ///
     /// ```
-    /// use keyed_priority_queue::KeyedPriorityQueue;
-    /// let mut queue = KeyedPriorityQueue::new();
+    /// use keyed_priority_queue::KeyedWeakPriorityQueue;
+    /// let mut queue = KeyedWeakPriorityQueue::new();
     /// queue.push("First", 5);
     /// assert_eq!(queue.peek(), Some((&"First", &5)));
     /// queue.push("First", 10);
@@ -259,8 +266,8 @@ impl<TKey: Hash + Eq, TPriority: Ord, S: BuildHasher> KeyedPriorityQueue<TKey, T
     ///
     ///
     /// ```
-    /// use keyed_priority_queue::KeyedPriorityQueue;
-    /// let mut queue: KeyedPriorityQueue<i32, i32> = (0..5).map(|x|(x,x)).collect();
+    /// use keyed_priority_queue::KeyedBinaryPriorityQueue;
+    /// let mut queue: KeyedBinaryPriorityQueue<i32, i32> = (0..5).map(|x|(x,x)).collect();
     /// assert_eq!(queue.pop(), Some((4,4)));
     /// assert_eq!(queue.pop(), Some((3,3)));
     /// assert_eq!(queue.pop(), Some((2,2)));
@@ -282,8 +289,8 @@ impl<TKey: Hash + Eq, TPriority: Ord, S: BuildHasher> KeyedPriorityQueue<TKey, T
     ///
     ///
     /// ```
-    /// use keyed_priority_queue::KeyedPriorityQueue;
-    /// let mut queue: KeyedPriorityQueue<i32, i32> = (0..5).map(|x|(x,x)).collect();
+    /// use keyed_priority_queue::KeyedWeakPriorityQueue;
+    /// let mut queue: KeyedWeakPriorityQueue<i32, i32> = (0..5).map(|x|(x,x)).collect();
     /// assert_eq!(queue.peek(), Some((&4, &4)));
     /// ```
     ///
@@ -292,19 +299,21 @@ impl<TKey: Hash + Eq, TPriority: Ord, S: BuildHasher> KeyedPriorityQueue<TKey, T
     /// Always ***O(1)***
     pub fn peek(&self) -> Option<(&TKey, &TPriority)> {
         let (first_idx, heap_idx) = self.heap.most_prioritized_idx()?;
-        let (key, _) = self.key_to_pos.get_index(first_idx);
-        let (_, priority) = self
+        let (key, _idx_chk) = self.key_to_pos.get_index(first_idx);
+        debug_assert_eq!(heap_idx, _idx_chk);
+        let entry = self
             .heap
-            .look_into(heap_idx)
+            .data()
+            .get(heap_idx.0)
             .expect("Checked using key_to_pos");
-        Some((key, priority))
+        Some((key, entry.priority_ref()))
     }
 
     /// Gets the given key's corresponding entry in the map for in-place manipulation.
     ///
     /// ## Time complexity
     /// Amortized ***O(1)***, uses only one hash lookup
-    pub fn entry(&mut self, key: TKey) -> Entry<TKey, TPriority, S> {
+    pub fn entry(&mut self, key: TKey) -> Entry<TKey, TPriority, THeap, S> {
         // Borrow checker treats borrowing a field as borrowing whole structure
         // so we need to get references to fields to borrow them individually.
         let key_to_pos = &mut self.key_to_pos;
@@ -314,10 +323,12 @@ impl<TKey: Hash + Eq, TPriority: Ord, S: BuildHasher> KeyedPriorityQueue<TKey, T
             MediatorEntry::Vacant(internal_entry) => Entry::Vacant(VacantEntry {
                 internal_entry,
                 heap,
+                _phantom: std::marker::PhantomData,
             }),
             MediatorEntry::Occupied(internal_entry) => Entry::Occupied(OccupiedEntry {
                 internal_entry,
                 heap,
+                _phantom: std::marker::PhantomData,
             }),
         }
     }
@@ -328,8 +339,8 @@ impl<TKey: Hash + Eq, TPriority: Ord, S: BuildHasher> KeyedPriorityQueue<TKey, T
     ///
     ///
     /// ```
-    /// use keyed_priority_queue::KeyedPriorityQueue;
-    /// let mut queue: KeyedPriorityQueue<&str, i32> = [("first", 0), ("second", 1), ("third", 2)]
+    /// use keyed_priority_queue::KeyedBinaryPriorityQueue;
+    /// let mut queue: KeyedBinaryPriorityQueue<&str, i32> = [("first", 0), ("second", 1), ("third", 2)]
     ///                             .iter().cloned().collect();
     /// assert_eq!(queue.get_priority(&"second"), Some(&1));
     /// ```
@@ -345,9 +356,10 @@ impl<TKey: Hash + Eq, TPriority: Ord, S: BuildHasher> KeyedPriorityQueue<TKey, T
         let heap_idx = self.key_to_pos.get(key)?;
         Some(
             self.heap
-                .look_into(heap_idx)
+                .data()
+                .get(heap_idx.0)
                 .expect("Must contain if key_to_pos contain")
-                .1,
+                .priority_ref(),
         )
     }
 
@@ -358,8 +370,8 @@ impl<TKey: Hash + Eq, TPriority: Ord, S: BuildHasher> KeyedPriorityQueue<TKey, T
     ///
     ///
     /// ```
-    /// use keyed_priority_queue::{KeyedPriorityQueue, SetPriorityNotFoundError};
-    /// let mut queue: KeyedPriorityQueue<&str, i32> = [("first", 0), ("second", 1), ("third", 2)]
+    /// use keyed_priority_queue::{KeyedWeakPriorityQueue, SetPriorityNotFoundError};
+    /// let mut queue: KeyedWeakPriorityQueue<&str, i32> = [("first", 0), ("second", 1), ("third", 2)]
     ///                             .iter().cloned().collect();
     /// assert_eq!(queue.set_priority(&"second", 5), Ok(1));
     /// assert_eq!(queue.get_priority(&"second"), Some(&5));
@@ -397,8 +409,8 @@ impl<TKey: Hash + Eq, TPriority: Ord, S: BuildHasher> KeyedPriorityQueue<TKey, T
     ///
     ///
     /// ```
-    /// use keyed_priority_queue::KeyedPriorityQueue;
-    /// let mut queue: KeyedPriorityQueue<i32, i32> = (0..5).map(|x|(x,x)).collect();
+    /// use keyed_priority_queue::KeyedBinaryPriorityQueue;
+    /// let mut queue: KeyedBinaryPriorityQueue<i32, i32> = (0..5).map(|x|(x,x)).collect();
     /// assert_eq!(queue.remove(&2), Some(2));
     /// assert_eq!(queue.pop(), Some((4,4)));
     /// assert_eq!(queue.pop(), Some((3,3)));
@@ -428,8 +440,8 @@ impl<TKey: Hash + Eq, TPriority: Ord, S: BuildHasher> KeyedPriorityQueue<TKey, T
     ///
     ///
     /// ```
-    /// use keyed_priority_queue::KeyedPriorityQueue;
-    /// let mut queue: KeyedPriorityQueue<i32, i32> = (0..5).map(|x|(x,x)).collect();
+    /// use keyed_priority_queue::KeyedWeakPriorityQueue;
+    /// let mut queue: KeyedWeakPriorityQueue<i32, i32> = (0..5).map(|x|(x,x)).collect();
     /// assert_eq!(queue.remove_entry(&2), Some((2, 2)));
     /// assert_eq!(queue.pop(), Some((4,4)));
     /// assert_eq!(queue.pop(), Some((3,3)));
@@ -458,8 +470,8 @@ impl<TKey: Hash + Eq, TPriority: Ord, S: BuildHasher> KeyedPriorityQueue<TKey, T
     ///
     ///
     /// ```
-    /// use keyed_priority_queue::KeyedPriorityQueue;
-    /// let queue: KeyedPriorityQueue<i32, i32> = (0..5).map(|x|(x,x)).collect();
+    /// use keyed_priority_queue::KeyedBinaryPriorityQueue;
+    /// let queue: KeyedBinaryPriorityQueue<i32, i32> = (0..5).map(|x|(x,x)).collect();
     /// assert_eq!(queue.len(), 5);
     /// ```
     ///
@@ -468,14 +480,14 @@ impl<TKey: Hash + Eq, TPriority: Ord, S: BuildHasher> KeyedPriorityQueue<TKey, T
     /// Always ***O(1)***
     #[inline]
     pub fn len(&self) -> usize {
-        debug_assert_eq!(self.key_to_pos.len(), self.heap.usize_len());
+        debug_assert_eq!(self.key_to_pos.len(), self.heap.data().len());
         self.key_to_pos.len()
     }
 
     /// Returns true if queue is empty.
     ///
     /// ```
-    /// let mut queue = keyed_priority_queue::KeyedPriorityQueue::new();
+    /// let mut queue = keyed_priority_queue::KeyedWeakPriorityQueue::new();
     /// assert!(queue.is_empty());
     /// queue.push(0,5);
     /// assert!(!queue.is_empty());
@@ -486,15 +498,15 @@ impl<TKey: Hash + Eq, TPriority: Ord, S: BuildHasher> KeyedPriorityQueue<TKey, T
     /// Always ***O(1)***
     #[inline]
     pub fn is_empty(&self) -> bool {
-        debug_assert_eq!(self.heap.is_empty(), self.key_to_pos.is_empty());
+        debug_assert_eq!(self.heap.data().is_empty(), self.key_to_pos.is_empty());
         self.key_to_pos.is_empty()
     }
 
     /// Make the queue empty.
     ///
     /// ```
-    /// use keyed_priority_queue::KeyedPriorityQueue;
-    /// let mut queue: KeyedPriorityQueue<i32, i32> = (0..5).map(|x|(x,x)).collect();
+    /// use keyed_priority_queue::KeyedBinaryPriorityQueue;
+    /// let mut queue: KeyedBinaryPriorityQueue<i32, i32> = (0..5).map(|x|(x,x)).collect();
     /// assert!(!queue.is_empty());
     /// queue.clear();
     /// assert!(queue.is_empty());
@@ -512,9 +524,9 @@ impl<TKey: Hash + Eq, TPriority: Ord, S: BuildHasher> KeyedPriorityQueue<TKey, T
     /// Create readonly borrowing iterator over heap
     ///
     /// ```
-    /// use keyed_priority_queue::KeyedPriorityQueue;
+    /// use keyed_priority_queue::KeyedWeakPriorityQueue;
     /// use std::collections::HashMap;
-    /// let queue: KeyedPriorityQueue<i32, i32> = (0..5).map(|x|(x,x)).collect();
+    /// let queue: KeyedWeakPriorityQueue<i32, i32> = (0..5).map(|x|(x,x)).collect();
     /// let mut entries = HashMap::new();
     /// for (&key, &priority) in queue.iter(){
     ///     entries.insert(key, priority);
@@ -529,7 +541,7 @@ impl<TKey: Hash + Eq, TPriority: Ord, S: BuildHasher> KeyedPriorityQueue<TKey, T
     pub fn iter(&self) -> KeyedPriorityQueueBorrowIter<TKey, TPriority, S> {
         KeyedPriorityQueueBorrowIter {
             key_to_pos: &self.key_to_pos,
-            heap_iterator: self.heap.iter(),
+            heap_iterator: self.heap.data().iter(),
         }
     }
 
@@ -579,12 +591,13 @@ impl<TKey: Hash + Eq, TPriority: Ord, S: BuildHasher> KeyedPriorityQueue<TKey, T
 ///
 /// [`KeyedPriorityQueue`]: struct.KeyedPriorityQueue.html
 /// [`entry`]: struct.KeyedPriorityQueue.html#method.entry
-pub enum Entry<'a, TKey: Eq + Hash, TPriority: Ord, S: BuildHasher> {
+pub enum Entry<'a, TKey: Eq + Hash, TPriority: Ord, THeap: EditableHeap<TPriority>, S: BuildHasher>
+{
     /// An occupied entry.
-    Occupied(OccupiedEntry<'a, TKey, TPriority, S>),
+    Occupied(OccupiedEntry<'a, TKey, TPriority, THeap, S>),
 
     /// A vacant entry.
-    Vacant(VacantEntry<'a, TKey, TPriority, S>),
+    Vacant(VacantEntry<'a, TKey, TPriority, THeap, S>),
 }
 
 /// A view into an occupied entry in a [`KeyedPriorityQueue`].
@@ -592,20 +605,23 @@ pub enum Entry<'a, TKey: Eq + Hash, TPriority: Ord, S: BuildHasher> {
 ///
 /// [`Entry`]: enum.Entry.html
 /// [`KeyedPriorityQueue`]: struct.KeyedPriorityQueue.html
-pub struct OccupiedEntry<'a, TKey, TPriority, S = RandomState>
+pub struct OccupiedEntry<'a, TKey, TPriority, THeap, S = RandomState>
 where
     TKey: 'a + Eq + Hash,
     TPriority: 'a + Ord,
+    THeap: EditableHeap<TPriority>,
     S: BuildHasher,
 {
     internal_entry: MediatorOccupiedEntry<'a, TKey, S>,
-    heap: &'a mut BinaryHeap<TPriority>,
+    heap: &'a mut THeap,
+    _phantom: std::marker::PhantomData<TPriority>,
 }
 
-impl<'a, TKey, TPriority, S> OccupiedEntry<'a, TKey, TPriority, S>
+impl<'a, TKey, TPriority, THeap, S> OccupiedEntry<'a, TKey, TPriority, THeap, S>
 where
     TKey: 'a + Eq + Hash,
     TPriority: 'a + Ord,
+    THeap: EditableHeap<TPriority>,
     S: BuildHasher,
 {
     /// Returns reference to the priority associated to entry
@@ -615,7 +631,11 @@ where
     #[inline]
     pub fn get_priority(&self) -> &TPriority {
         let heap_idx = self.internal_entry.get_heap_idx();
-        self.heap.look_into(heap_idx).expect("Must be in queue").1
+        self.heap
+            .data()
+            .get(heap_idx.0)
+            .expect("Must be in queue")
+            .priority_ref()
     }
 
     /// Changes priority of key and returns old priority
@@ -683,20 +703,23 @@ where
 ///
 /// [`Entry`]: enum.Entry.html
 /// [`KeyedPriorityQueue`]: struct.KeyedPriorityQueue.html
-pub struct VacantEntry<'a, TKey, TPriority, S = RandomState>
+pub struct VacantEntry<'a, TKey, TPriority, THeap, S = RandomState>
 where
     TKey: 'a + Eq + Hash,
     TPriority: 'a + Ord,
+    THeap: EditableHeap<TPriority>,
     S: BuildHasher,
 {
     internal_entry: MediatorVacantEntry<'a, TKey, S>,
-    heap: &'a mut BinaryHeap<TPriority>,
+    heap: &'a mut THeap,
+    _phantom: std::marker::PhantomData<TPriority>,
 }
 
-impl<'a, TKey, TPriority, S> VacantEntry<'a, TKey, TPriority, S>
+impl<'a, TKey, TPriority, THeap, S> VacantEntry<'a, TKey, TPriority, THeap, S>
 where
     TKey: 'a + Eq + Hash,
     TPriority: 'a + Ord,
+    THeap: EditableHeap<TPriority>,
     S: BuildHasher,
 {
     /// Insert priority of key to queue
@@ -710,7 +733,7 @@ where
         let (key_to_pos, mediator_index) = unsafe {
             // Safety: reference used only inside the method and never leaked away
             // This method can be called only when Mediator field alive along with queue itself.
-            internal_entry.insert(heap.len())
+            internal_entry.insert(HeapIndex(heap.data().len()))
         };
         heap.push(mediator_index, priority, |index, val| {
             *key_to_pos.get_index_mut(index) = val
@@ -727,8 +750,12 @@ where
     }
 }
 
-impl<TKey: Hash + Eq + Debug, TPriority: Ord + Debug, S: BuildHasher> Debug
-    for KeyedPriorityQueue<TKey, TPriority, S>
+impl<
+        TKey: Hash + Eq + Debug,
+        TPriority: Ord + Debug,
+        THeap: EditableHeap<TPriority>,
+        S: BuildHasher,
+    > Debug for KeyedPriorityQueue<TKey, TPriority, THeap, S>
 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
         write!(f, "[")?;
@@ -739,8 +766,8 @@ impl<TKey: Hash + Eq + Debug, TPriority: Ord + Debug, S: BuildHasher> Debug
     }
 }
 
-impl<TKey: Hash + Eq, TPriority: Ord, S: BuildHasher + Default> Default
-    for KeyedPriorityQueue<TKey, TPriority, S>
+impl<TKey: Hash + Eq, TPriority: Ord, THeap: EditableHeap<TPriority>, S: BuildHasher + Default>
+    Default for KeyedPriorityQueue<TKey, TPriority, THeap, S>
 {
     #[inline]
     fn default() -> Self {
@@ -748,8 +775,8 @@ impl<TKey: Hash + Eq, TPriority: Ord, S: BuildHasher + Default> Default
     }
 }
 
-impl<TKey: Hash + Eq, TPriority: Ord, S: BuildHasher + Default> FromIterator<(TKey, TPriority)>
-    for KeyedPriorityQueue<TKey, TPriority, S>
+impl<TKey: Hash + Eq, TPriority: Ord, THeap: EditableHeap<TPriority>, S: BuildHasher + Default>
+    FromIterator<(TKey, TPriority)> for KeyedPriorityQueue<TKey, TPriority, THeap, S>
 {
     /// Allows building queue from iterator using `collect()`.
     /// At result it will be valid queue with unique keys.
@@ -758,8 +785,8 @@ impl<TKey: Hash + Eq, TPriority: Ord, S: BuildHasher + Default> FromIterator<(TK
     ///
     ///
     /// ```
-    /// use keyed_priority_queue::KeyedPriorityQueue;
-    /// let mut queue: KeyedPriorityQueue<&str, i32> =
+    /// use keyed_priority_queue::KeyedBinaryPriorityQueue;
+    /// let mut queue: KeyedBinaryPriorityQueue<&str, i32> =
     /// [("first", 0), ("second", 1), ("third", 2), ("first", -1)]
     ///                             .iter().cloned().collect();
     /// assert_eq!(queue.pop(), Some(("third", 2)));
@@ -771,15 +798,52 @@ impl<TKey: Hash + Eq, TPriority: Ord, S: BuildHasher + Default> FromIterator<(TK
     /// ### Time complexity
     ///
     /// ***O(n log n)*** in average.
-    fn from_iter<T: IntoIterator<Item = (TKey, TPriority)>>(iter: T) -> Self {
-        let (heap, key_to_pos) = BinaryHeap::produce_from_iter_hash(iter);
-        Self { heap, key_to_pos }
+    fn from_iter<T: IntoIterator<Item = (TKey, TPriority)>>(i: T) -> Self {
+        let iter = i.into_iter();
+        let (min_size, _) = iter.size_hint();
+
+        let mut heap_base: Vec<HeapEntry<TPriority>> = Vec::with_capacity(min_size);
+        let mut key_to_pos: Mediator<TKey, S> =
+            Mediator::with_capacity_and_hasher(min_size, S::default());
+
+        for (key, priority) in iter {
+            match key_to_pos.entry(key) {
+                MediatorEntry::Vacant(entry) => {
+                    let outer_pos = entry.index();
+                    unsafe {
+                        // Safety: resulting reference never used
+                        entry.insert(HeapIndex(heap_base.len()));
+                    }
+                    heap_base.push(HeapEntry {
+                        outer_pos,
+                        priority,
+                    });
+                }
+                MediatorEntry::Occupied(entry) => {
+                    let HeapIndex(heap_pos) = entry.get_heap_idx();
+                    heap_base[heap_pos].priority = priority;
+                }
+            }
+        }
+        let heap = THeap::from_entries_vec(heap_base);
+
+        for (i, pos) in heap.data().iter().map(HeapEntry::to_outer).enumerate() {
+            let heap_idx = key_to_pos.get_index_mut(pos);
+            *heap_idx = HeapIndex(i);
+        }
+        Self {
+            heap,
+            key_to_pos,
+            _phantom: std::marker::PhantomData,
+        }
     }
 }
 
-impl<TKey: Hash + Eq, TPriority: Ord> IntoIterator for KeyedPriorityQueue<TKey, TPriority> {
+impl<TKey: Hash + Eq, TPriority: Ord, THeap: EditableHeap<TPriority>> IntoIterator
+    for KeyedPriorityQueue<TKey, TPriority, THeap>
+{
     type Item = (TKey, TPriority);
-    type IntoIter = KeyedPriorityQueueIterator<TKey, TPriority>;
+    type IntoIter = KeyedPriorityQueueIterator<TKey, TPriority, THeap>;
 
     /// Make iterator that return items in descending order.
     ///
@@ -787,8 +851,8 @@ impl<TKey: Hash + Eq, TPriority: Ord> IntoIterator for KeyedPriorityQueue<TKey, 
     ///
     ///
     /// ```
-    /// use keyed_priority_queue::KeyedPriorityQueue;
-    /// let mut queue: KeyedPriorityQueue<&str, i32> =
+    /// use keyed_priority_queue::KeyedWeakPriorityQueue;
+    /// let mut queue: KeyedWeakPriorityQueue<&str, i32> =
     ///     [("first", 0), ("second", 1), ("third", 2)]
     ///                             .iter().cloned().collect();
     /// let mut iterator = queue.into_iter();
@@ -810,17 +874,18 @@ impl<TKey: Hash + Eq, TPriority: Ord> IntoIterator for KeyedPriorityQueue<TKey, 
 ///
 /// ### Time complexity
 /// Overall complexity of iteration is ***O(n log n)***
-pub struct KeyedPriorityQueueIterator<TKey, TPriority, S = RandomState>
+pub struct KeyedPriorityQueueIterator<TKey, TPriority, THeap, S = RandomState>
 where
     TKey: Hash + Eq,
     TPriority: Ord,
+    THeap: EditableHeap<TPriority>,
     S: BuildHasher,
 {
-    queue: KeyedPriorityQueue<TKey, TPriority, S>,
+    queue: KeyedPriorityQueue<TKey, TPriority, THeap, S>,
 }
 
-impl<TKey: Hash + Eq, TPriority: Ord, S: BuildHasher> Iterator
-    for KeyedPriorityQueueIterator<TKey, TPriority, S>
+impl<TKey: Hash + Eq, TPriority: Ord, THeap: EditableHeap<TPriority>, S: BuildHasher> Iterator
+    for KeyedPriorityQueueIterator<TKey, TPriority, THeap, S>
 {
     type Item = (TKey, TPriority);
 
@@ -853,7 +918,7 @@ where
     TPriority: 'a,
     S: BuildHasher,
 {
-    heap_iterator: BinaryHeapIterator<'a, TPriority>,
+    heap_iterator: std::slice::Iter<'a, HeapEntry<TPriority>>,
     key_to_pos: &'a Mediator<TKey, S>,
 }
 
@@ -866,9 +931,9 @@ impl<'a, TKey: 'a + Hash + Eq, TPriority: 'a, S: BuildHasher> Iterator
     fn next(&mut self) -> Option<Self::Item> {
         let heap_iterator = &mut self.heap_iterator;
         let key_to_pos = &self.key_to_pos;
-        heap_iterator.next().map(|(index, priority)| {
-            let (key, _) = key_to_pos.get_index(index);
-            (key, priority)
+        heap_iterator.next().map(|heap_entry| {
+            let (key, _) = key_to_pos.get_index(heap_entry.outer_pos);
+            (key, heap_entry.priority_ref())
         })
     }
 
@@ -905,11 +970,13 @@ impl std::error::Error for SetPriorityNotFoundError {}
 #[cfg(test)]
 mod tests {
     use super::KeyedPriorityQueue;
+    use crate::editable_binary_heap::BinaryHeap;
+    use crate::editable_weak_heap::WeakHeap;
 
     #[test]
     fn test_priority() {
         let mut items = [1, 4, 5, 2, 3];
-        let mut queue = KeyedPriorityQueue::<i32, i32>::with_capacity(items.len());
+        let mut queue = KeyedPriorityQueue::<i32, i32, WeakHeap<i32>>::with_capacity(items.len());
         for (i, &x) in items.iter().enumerate() {
             queue.push(x, x);
             assert_eq!(queue.len(), i + 1);
@@ -932,7 +999,8 @@ mod tests {
             ("fifth", 1),
         ];
 
-        let mut queue: KeyedPriorityQueue<&str, i32> = items.iter().cloned().collect();
+        let mut queue: KeyedPriorityQueue<&str, i32, BinaryHeap<i32>> =
+            items.iter().cloned().collect();
 
         while queue.len() > 0 {
             let (&key, &priority) = queue.peek().unwrap();
@@ -953,7 +1021,7 @@ mod tests {
             ("fifth", 1),
         ];
 
-        let queue: KeyedPriorityQueue<&str, i32> = items.iter().cloned().collect();
+        let queue: KeyedPriorityQueue<&str, i32, WeakHeap<i32>> = items.iter().cloned().collect();
         for &(key, priority) in items.iter() {
             let &real = queue.get_priority(&key).unwrap();
             assert_eq!(real, priority);
@@ -975,7 +1043,8 @@ mod tests {
             ("fifth", 1),
         ];
 
-        let mut queue: KeyedPriorityQueue<&str, i32> = items.iter().cloned().collect();
+        let mut queue: KeyedPriorityQueue<&str, i32, BinaryHeap<i32>> =
+            items.iter().cloned().collect();
         assert_eq!(
             queue.set_priority(&"HELLO", 64),
             Err(super::SetPriorityNotFoundError::default())
@@ -997,7 +1066,8 @@ mod tests {
     #[test]
     fn test_remove_items() {
         let mut items = [1, 4, 5, 2, 3];
-        let mut queue: KeyedPriorityQueue<i32, i32> = items.iter().map(|&x| (x, x)).collect();
+        let mut queue: KeyedPriorityQueue<i32, i32, WeakHeap<i32>> =
+            items.iter().map(|&x| (x, x)).collect();
         assert_eq!(queue.remove_entry(&3), Some((3, 3)));
         assert_eq!(queue.remove_entry(&20), None);
         assert_eq!(queue.len(), items.len() - 1);
@@ -1019,7 +1089,8 @@ mod tests {
             ("fifth", 1),
         ];
 
-        let queue: KeyedPriorityQueue<&str, i32> = items.iter().rev().cloned().collect();
+        let queue: KeyedPriorityQueue<&str, i32, BinaryHeap<i32>> =
+            items.iter().rev().cloned().collect();
         let mut iter = queue.into_iter();
         assert_eq!(iter.next(), Some(("first", 5)));
         assert_eq!(iter.next(), Some(("second", 4)));
@@ -1031,7 +1102,7 @@ mod tests {
 
     #[test]
     fn test_multiple_push() {
-        let mut queue = KeyedPriorityQueue::new();
+        let mut queue = KeyedPriorityQueue::<_, _, WeakHeap<_>>::new();
         queue.push(0, 1);
         assert_eq!(queue.peek(), Some((&0, &1)));
         queue.push(0, 5);
@@ -1044,7 +1115,7 @@ mod tests {
 
     #[test]
     fn test_borrow_keys() {
-        let mut queue: KeyedPriorityQueue<String, i32> = KeyedPriorityQueue::new();
+        let mut queue: KeyedPriorityQueue<String, i32, BinaryHeap<i32>> = KeyedPriorityQueue::new();
         queue.push("Hello".to_string(), 5);
         let string = "Hello".to_string();
         let string_ref: &String = &string;
@@ -1065,7 +1136,7 @@ mod tests {
             ("fifth", 1),
         ];
 
-        let mut queue = KeyedPriorityQueue::new();
+        let mut queue = KeyedPriorityQueue::<_, _, WeakHeap<_>>::new();
 
         for &(k, v) in items.iter() {
             queue.push(k, v);
@@ -1102,7 +1173,7 @@ mod tests {
             ("fifth", 1),
         ];
 
-        let mut queue = KeyedPriorityQueue::new();
+        let mut queue = KeyedPriorityQueue::<_, _, BinaryHeap<_>>::new();
 
         for &(k, v) in items.iter() {
             queue.push(k, v);
@@ -1141,7 +1212,7 @@ mod tests {
             ("fourth", 2),
         ];
 
-        let queue: KeyedPriorityQueue<String, i32> =
+        let queue: KeyedPriorityQueue<String, i32, WeakHeap<i32>> =
             items.iter().map(|&(k, p)| (k.to_owned(), p)).collect();
 
         let mut map: HashMap<&str, i32> = HashMap::new();
@@ -1160,13 +1231,13 @@ mod tests {
     #[test]
     fn test_sync() {
         fn assert_sync<T: Sync>() {}
-        assert_sync::<KeyedPriorityQueue<i32, i32>>();
+        assert_sync::<KeyedPriorityQueue<i32, i32, BinaryHeap<i32>>>();
     }
 
     #[test]
     fn test_send() {
         fn assert_sync<T: Send>() {}
-        assert_sync::<KeyedPriorityQueue<i32, i32>>();
+        assert_sync::<KeyedPriorityQueue<i32, i32, WeakHeap<i32>>>();
     }
 
     #[test]
@@ -1179,7 +1250,7 @@ mod tests {
             ("fifth", 1),
         ];
 
-        let queue: KeyedPriorityQueue<&str, i32> = items.iter().cloned().collect();
+        let queue: KeyedPriorityQueue<&str, i32, BinaryHeap<i32>> = items.iter().cloned().collect();
 
         assert_eq!(
             format!("{:?}", queue),
@@ -1194,7 +1265,7 @@ mod tests {
         struct Key(u32);
 
         let vals = [0u32, 1, 1, 2, 4, 5];
-        let mut queue: KeyedPriorityQueue<Key, u32> =
+        let mut queue: KeyedPriorityQueue<Key, u32, WeakHeap<u32>> =
             vals.iter().copied().map(|v| (Key(v), v)).collect();
         queue.set_priority(&Key(1), 10).unwrap();
         let mut res = Vec::with_capacity(5);

@@ -154,10 +154,20 @@ mod std_a_star {
 mod keyed_a_star {
     use super::*;
     use fxhash::{FxHashMap, FxHashSet};
-    use keyed_priority_queue::{Entry, KeyedPriorityQueue};
+    use keyed_priority_queue::{EditableHeap, Entry, KeyedPriorityQueue};
     use std::hash::BuildHasher;
+    // Positions sortered by total cost and real cost.
+    // We prefer items with lower real cost if total are same.
+    #[derive(Copy, Clone, Debug, Ord, PartialOrd, Eq, PartialEq)]
+    pub(crate) struct Cost {
+        total: usize,
+        real: usize,
+    }
 
-    pub(crate) fn find_path<HasherParam: BuildHasher + Default>(
+    pub(crate) fn find_path<
+        HasherParam: BuildHasher + Default,
+        THeap: EditableHeap<Reverse<Cost>>,
+    >(
         start: Position,
         target: Position,
         field: &Field,
@@ -191,14 +201,8 @@ mod keyed_a_star {
         let mut parentize: FxHashMap<Position, Position> = FxHashMap::default();
         // Already checked
         let mut closed_set: FxHashSet<Position> = FxHashSet::default();
-        // Positions sortered by total cost and real cost.
-        // We prefer items with lower real cost if total are same.
-        #[derive(Copy, Clone, Debug, Ord, PartialOrd, Eq, PartialEq)]
-        struct Cost {
-            total: usize,
-            real: usize,
-        }
-        let mut available = KeyedPriorityQueue::<Position, Reverse<Cost>, HasherParam>::default();
+        let mut available =
+            KeyedPriorityQueue::<Position, Reverse<Cost>, THeap, HasherParam>::default();
         available.push(
             start,
             Reverse(Cost {
@@ -273,21 +277,51 @@ fn find_path_benchmark(c: &mut Criterion) {
             |b, &(start, target, field)| b.iter(|| std_a_star::find_path(start, target, field)),
         );
         group.bench_with_input(
-            BenchmarkId::new("Keyed A Star", end),
+            BenchmarkId::new("Keyed A Star Binary", end),
             &(start, stop_at, &field),
             |b, &(start, target, field)| {
                 b.iter(|| {
-                    keyed_a_star::find_path::<std::collections::hash_map::RandomState>(
-                        start, target, field,
-                    )
+                    keyed_a_star::find_path::<
+                        std::collections::hash_map::RandomState,
+                        keyed_priority_queue::BinaryHeap<Reverse<keyed_a_star::Cost>>,
+                    >(start, target, field)
                 })
             },
         );
         group.bench_with_input(
-            BenchmarkId::new("Keyed A Star FxHash", end),
+            BenchmarkId::new("Keyed A Star Weak", end),
             &(start, stop_at, &field),
             |b, &(start, target, field)| {
-                b.iter(|| keyed_a_star::find_path::<fxhash::FxBuildHasher>(start, target, field))
+                b.iter(|| {
+                    keyed_a_star::find_path::<
+                        std::collections::hash_map::RandomState,
+                        keyed_priority_queue::WeakHeap<Reverse<keyed_a_star::Cost>>,
+                    >(start, target, field)
+                })
+            },
+        );
+        group.bench_with_input(
+            BenchmarkId::new("Keyed A Star Binary FxHash", end),
+            &(start, stop_at, &field),
+            |b, &(start, target, field)| {
+                b.iter(|| {
+                    keyed_a_star::find_path::<
+                        fxhash::FxBuildHasher,
+                        keyed_priority_queue::BinaryHeap<Reverse<keyed_a_star::Cost>>,
+                    >(start, target, field)
+                })
+            },
+        );
+        group.bench_with_input(
+            BenchmarkId::new("Keyed A Star Weak FxHash", end),
+            &(start, stop_at, &field),
+            |b, &(start, target, field)| {
+                b.iter(|| {
+                    keyed_a_star::find_path::<
+                        fxhash::FxBuildHasher,
+                        keyed_priority_queue::WeakHeap<Reverse<keyed_a_star::Cost>>,
+                    >(start, target, field)
+                })
             },
         );
     }
@@ -309,21 +343,51 @@ fn find_path_benchmark(c: &mut Criterion) {
         |b, _| b.iter(|| std_a_star::find_path(start, stop_at, &field_eq)),
     );
     group.bench_with_input(
-        BenchmarkId::new("Keyed A Star Ones field", BIG_SIZE),
+        BenchmarkId::new("Keyed A Star Binary Ones field", BIG_SIZE),
         &(start, stop_at, &field),
         |b, _| {
             b.iter(|| {
-                keyed_a_star::find_path::<std::collections::hash_map::RandomState>(
-                    start, stop_at, &field_eq,
-                )
+                keyed_a_star::find_path::<
+                    std::collections::hash_map::RandomState,
+                    keyed_priority_queue::BinaryHeap<Reverse<keyed_a_star::Cost>>,
+                >(start, stop_at, &field_eq)
             })
         },
     );
     group.bench_with_input(
-        BenchmarkId::new("Keyed A Star Ones field FxHash", BIG_SIZE),
+        BenchmarkId::new("Keyed A Star Weak Ones field", BIG_SIZE),
         &(start, stop_at, &field),
         |b, _| {
-            b.iter(|| keyed_a_star::find_path::<fxhash::FxBuildHasher>(start, stop_at, &field_eq))
+            b.iter(|| {
+                keyed_a_star::find_path::<
+                    std::collections::hash_map::RandomState,
+                    keyed_priority_queue::WeakHeap<Reverse<keyed_a_star::Cost>>,
+                >(start, stop_at, &field_eq)
+            })
+        },
+    );
+    group.bench_with_input(
+        BenchmarkId::new("Keyed A Star Binary Ones field FxHash", BIG_SIZE),
+        &(start, stop_at, &field),
+        |b, _| {
+            b.iter(|| {
+                keyed_a_star::find_path::<
+                    fxhash::FxBuildHasher,
+                    keyed_priority_queue::BinaryHeap<Reverse<keyed_a_star::Cost>>,
+                >(start, stop_at, &field_eq)
+            })
+        },
+    );
+    group.bench_with_input(
+        BenchmarkId::new("Keyed A Star Weak Ones field FxHash", BIG_SIZE),
+        &(start, stop_at, &field),
+        |b, _| {
+            b.iter(|| {
+                keyed_a_star::find_path::<
+                    fxhash::FxBuildHasher,
+                    keyed_priority_queue::WeakHeap<Reverse<keyed_a_star::Cost>>,
+                >(start, stop_at, &field_eq)
+            })
         },
     );
 
